@@ -1,14 +1,33 @@
 from copy import copy
 from pathlib import Path
 import re
+import sys
 
 import openpyxl
 
 
-BASE_DIR = Path(__file__).resolve().parent
-SOURCE_PATH = BASE_DIR / "bases" / "Adquira.xlsx"
-DEMANDA_PATH = BASE_DIR / "bases" / "Demanda.xlsx"
-OUTPUT_PATH = BASE_DIR / "bases" / "Relatorio_Separado.xlsx"
+def resolve_bases_dir():
+    script_dir = Path(__file__).resolve().parent
+    candidates = [Path.cwd() / "bases", script_dir / "bases"]
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates = [exe_dir / "bases", exe_dir.parent / "bases", Path.cwd() / "bases"] + candidates
+
+    for path in candidates:
+        if (path / "Adquira.xlsx").exists() and (path / "Demanda.xlsx").exists():
+            return path
+
+    checked = "\n".join(str(p) for p in candidates)
+    raise FileNotFoundError(
+        "Não encontrei a pasta 'bases' com Adquira.xlsx e Demanda.xlsx.\nLocais verificados:\n" + checked
+    )
+
+
+BASES_DIR = resolve_bases_dir()
+SOURCE_PATH = BASES_DIR / "Adquira.xlsx"
+DEMANDA_PATH = BASES_DIR / "Demanda.xlsx"
+OUTPUT_PATH = BASES_DIR / "Relatorio_Separado.xlsx"
 
 
 def color_key(cell):
@@ -259,7 +278,7 @@ saved_path = OUTPUT_PATH
 try:
     wb_new.save(saved_path)
 except PermissionError:
-    saved_path = BASE_DIR / "bases" / "Relatorio_Separado_novo.xlsx"
+    saved_path = BASES_DIR / "Relatorio_Separado_novo.xlsx"
     wb_new.save(saved_path)
 
 print(f"\n✓ Arquivo criado com sucesso: {saved_path}")
