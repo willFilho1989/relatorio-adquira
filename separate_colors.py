@@ -82,6 +82,7 @@ def parse_brl_number(value):
 
 
 def create_din_with_excel(file_path: Path):
+    import pythoncom
     import win32com.client
 
     xl_database = 1
@@ -91,11 +92,20 @@ def create_din_with_excel(file_path: Path):
     xl_sum = -4157
     xl_tabular_row = 1
 
-    excel = win32com.client.Dispatch("Excel.Application")
-    excel.Visible = False
-    excel.DisplayAlerts = False
+    pythoncom.CoInitialize()
+    excel = win32com.client.DispatchEx("Excel.Application")
     wb = None
+    original_error = None
     try:
+        try:
+            excel.Visible = False
+        except Exception:
+            pass
+        try:
+            excel.DisplayAlerts = False
+        except Exception:
+            pass
+
         wb = excel.Workbooks.Open(str(file_path))
         data_ws = wb.Worksheets("Verde")
 
@@ -157,15 +167,26 @@ def create_din_with_excel(file_path: Path):
         din_ws.Columns("B:B").NumberFormatLocal = "R$ #.##0,00"
         din_ws.Columns("H:H").NumberFormatLocal = "R$ #.##0,00"
 
-        din_ws.Activate()
-        excel.ActiveWindow.DisplayGridlines = False
         din_ws.Columns("A:J").AutoFit()
 
         wb.Save()
+    except Exception as exc:
+        original_error = exc
     finally:
         if wb is not None:
-            wb.Close(True)
-        excel.Quit()
+            try:
+                wb.Close(True)
+            except Exception as close_exc:
+                if original_error is None:
+                    original_error = close_exc
+        try:
+            excel.Quit()
+        except Exception as quit_exc:
+            if original_error is None:
+                original_error = quit_exc
+        pythoncom.CoUninitialize()
+    if original_error is not None:
+        raise original_error
 
 
 wb_source = openpyxl.load_workbook(SOURCE_PATH)
@@ -289,3 +310,4 @@ try:
     print("Aba DIN criada com as duas dinâmicas.")
 except Exception as exc:
     print(f"Aba DIN não foi criada automaticamente: {exc}")
+    raise
