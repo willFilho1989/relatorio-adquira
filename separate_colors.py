@@ -390,6 +390,38 @@ for row_idx, row_data in enumerate(blue_rows, 1):
     for col_idx, source_cell in enumerate(row_data, 1):
         copy_cell(source_cell, ws_blue.cell(row=row_idx, column=col_idx))
 
+azul_pedido_header_row, azul_pedido_col = find_column_index(ws_gray, "ID. PEDIDO COMPRADOR")
+azul_coment_header_row, azul_coment_col = find_column_index(ws_gray, "COMENTÁRIOS SOBRE FORNECEDOR")
+verde_pedido_header_row, verde_pedido_col = find_column_index(ws_blue, "ID. PEDIDO COMPRADOR")
+verde_coment_header_row, verde_coment_col = find_column_index(ws_blue, "COMENTÁRIOS")
+
+if not azul_pedido_col or not azul_coment_col:
+    raise ValueError("Não encontrei as colunas de pedido/comentário na aba Azul.")
+if not verde_pedido_col or not verde_coment_col:
+    raise ValueError("Não encontrei as colunas de pedido/comentário na aba Verde.")
+
+comentarios_por_pedido = {}
+inicio_azul = max(azul_pedido_header_row, azul_coment_header_row) + 1
+for r in range(inicio_azul, ws_gray.max_row + 1):
+    pedido_azul = normalize_order_id(ws_gray.cell(row=r, column=azul_pedido_col).value)
+    comentario_azul = ws_gray.cell(row=r, column=azul_coment_col).value
+    if not pedido_azul or comentario_azul is None:
+        continue
+    comentario_txt = str(comentario_azul).strip()
+    if comentario_txt and pedido_azul not in comentarios_por_pedido:
+        comentarios_por_pedido[pedido_azul] = comentario_txt
+
+comentarios_preenchidos = 0
+inicio_verde = max(verde_pedido_header_row, verde_coment_header_row) + 1
+for r in range(inicio_verde, ws_blue.max_row + 1):
+    pedido_verde = normalize_order_id(ws_blue.cell(row=r, column=verde_pedido_col).value)
+    if not pedido_verde:
+        continue
+    comentario = comentarios_por_pedido.get(pedido_verde)
+    if comentario:
+        ws_blue.cell(row=r, column=verde_coment_col, value=comentario)
+        comentarios_preenchidos += 1
+
 # Colunas UF e FRENTE na aba Itens (Azul)
 demanda_wb = openpyxl.load_workbook(DEMANDA_PATH, data_only=True)
 demanda_ws = demanda_wb.active
@@ -483,6 +515,7 @@ print(f"\n✓ Arquivo criado com sucesso: {saved_path}")
 print(f"FRENTE preenchida em {frente_count} linhas.")
 print(f"FRENTE = FATURADO em {faturado_count} linhas.")
 print(f"TRIBUTÁVEL normalizado em {tributavel_count} linhas.")
+print(f"COMENTÁRIOS preenchidos na aba Verde: {comentarios_preenchidos} linhas.")
 try:
     create_din_with_excel(saved_path)
     print("Aba DIN criada com as duas dinâmicas.")
