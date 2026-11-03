@@ -1,9 +1,16 @@
 from copy import copy
+import csv
+import math
 from pathlib import Path
 import re
 import sys
 
 import openpyxl
+from openpyxl import load_workbook
+
+
+CASA_CLIENTE_PATH_HINT = Path(r"C:\Users\WILLIAM.FILHO\Desktop\Faturamento\Vivo_Casa_Cliente")
+IMPLANTACAO_PATH_HINT = Path(r"C:\Users\WILLIAM.FILHO\Desktop\Faturamento\Vivo_Implantação")
 
 
 def resolve_bases_dir():
@@ -79,6 +86,160 @@ def parse_brl_number(value):
         return float(text)
     except ValueError:
         return None
+
+
+def resolve_tabular_paths(path_hint: Path):
+    supported_ext = {".xlsx", ".xlsm", ".csv"}
+    candidates = [path_hint]
+    if not path_hint.suffix:
+        for ext in (".xlsx", ".xlsm", ".csv"):
+            candidates.append(path_hint.with_suffix(ext))
+    if not path_hint.exists() and path_hint.parent.exists():
+        for match in path_hint.parent.glob(path_hint.name + "*"):
+            if match.suffix.lower() in supported_ext or match.is_dir():
+                candidates.append(match)
+
+    found_files = []
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        if candidate.is_file() and candidate.suffix.lower() in supported_ext and not candidate.name.startswith("~$"):
+            found_files.append(candidate)
+            continue
+        if candidate.is_dir():
+            direct_files = [
+                file_path
+                for file_path in candidate.iterdir()
+                if (
+                    file_path.is_file()
+                    and file_path.suffix.lower() in supported_ext
+                    and not file_path.name.startswith("~$")
+                )
+            ]
+            if direct_files:
+                found_files.extend(direct_files)
+                continue
+
+            recursive_files = []
+            for file_path in candidate.rglob("*"):
+                if (
+                    file_path.is_file()
+                    and file_path.suffix.lower() in supported_ext
+                    and not file_path.name.startswith("~$")
+                ):
+                    recursive_files.append(file_path)
+            recursive_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            found_files.extend(recursive_files[:30])
+
+    if found_files:
+        unique_sorted = sorted(set(found_files), key=lambda p: str(p).lower())
+        return unique_sorted
+
+    checked = "\n".join(str(p) for p in candidates)
+    raise FileNotFoundError(
+        f"Não encontrei a base em '{path_hint}'.\nArquivos verificados:\n{checked}"
+    )
+
+
+def normalize_header(value):
+    return re.sub(r"\s+", " ", str(value or "").strip().upper())
+
+
+def normalize_order_id(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return None
+        if value.is_integer():
+            return str(int(value))
+        text = format(value, ".15g")
+        return text.replace(",", ".").strip().upper()
+
+    text = str(value).strip()
+    if not text:
+        return None
+    text = re.sub(r"\s+", "", text).upper()
+    if re.fullmatch(r"[+-]?\d+([.,]\d+)?", text):
+        text = text.replace(",", ".")
+        try:
+            as_float = float(text)
+            if as_float.is_integer():
+                return str(int(as_float))
+        except ValueError:
+            pass
+    return text
+
+
+def find_column_index(ws, expected_header):
+    expected = normalize_header(expected_header)
+    max_scan_rows = min(5, ws.max_row)
+    for row in range(1, max_scan_rows + 1):
+        for col in range(1, ws.max_column + 1):
+            header = normalize_header(ws.cell(row=row, column=col).value)
+            if header == expected:
+                return row, col
+    return None, None
+
+
+def load_ids_from_excel(base_path: Path, column_name: str):
+    wb = load_workbook(base_path, read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        header_row, col_idx = find_column_index(ws, column_name)
+        if col_idx is None:
+            return set(), False
+
+        ids = set()
+        for row in range(header_row + 1, ws.max_row + 1):
+            normalized = normalize_order_id(ws.cell(row=row, column=col_idx).value)
+            if normalized:
+                ids.add(normalized)
+        return ids, True
+    finally:
+        wb.close()
+
+
+def load_ids_from_csv(base_path: Path, column_name: str):
+    ids = set()
+    found_column = False
+    with base_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        if reader.fieldnames:
+            normalized_headers = {normalize_header(h): h for h in reader.fieldnames}
+            col_name = normalized_headers.get(normalize_header(column_name))
+            if col_name:
+                found_column = True
+                for row in reader:
+                    normalized = normalize_order_id(row.get(col_name))
+                    if normalized:
+                        ids.add(normalized)
+    return ids, found_column
+
+
+def load_ids_from_base(path_hint: Path, column_name: str):
+    base_paths = resolve_tabular_paths(path_hint)
+    ids = set()
+    found_in_any_file = False
+    for base_path in base_paths:
+        suffix = base_path.suffix.lower()
+        if suffix == ".csv":
+            file_ids, found_column = load_ids_from_csv(base_path, column_name)
+        else:
+            file_ids, found_column = load_ids_from_excel(base_path, column_name)
+        if found_column:
+            found_in_any_file = True
+            ids.update(file_ids)
+
+    if not found_in_any_file:
+        raise ValueError(
+            f"Coluna '{column_name}' não encontrada em nenhum arquivo da base '{path_hint}'."
+        )
+    return ids
 
 
 def create_din_with_excel(file_path: Path):
@@ -247,6 +408,7 @@ headers = [str(ws_blue.cell(row=1, column=c).value or "").strip().upper() for c 
 artigo_col = headers.index("ARTIGO") + 1
 endereco_col = headers.index("ENDEREÇO DE ENTREGA") + 1
 tributavel_col = headers.index("TRIBUTÁVEL") + 1
+pedido_col = headers.index("ID. PEDIDO COMPRADOR") + 1
 uf_col = ws_blue.max_column + 1
 frente_col = ws_blue.max_column + 2
 ws_blue.cell(row=1, column=uf_col, value="UF")
@@ -254,11 +416,17 @@ ws_blue.cell(row=1, column=frente_col, value="FRENTE")
 ws_blue.cell(row=1, column=uf_col)._style = copy(ws_blue.cell(row=1, column=artigo_col)._style)
 ws_blue.cell(row=1, column=frente_col)._style = copy(ws_blue.cell(row=1, column=artigo_col)._style)
 
+faturado_ids = set()
+faturado_ids.update(load_ids_from_base(CASA_CLIENTE_PATH_HINT, "SGP_NUMERO_PEDIDO"))
+faturado_ids.update(load_ids_from_base(IMPLANTACAO_PATH_HINT, "PEDIDO"))
+
 frente_count = 0
 tributavel_count = 0
+faturado_count = 0
 for r in range(2, ws_blue.max_row + 1):
     endereco = ws_blue.cell(row=r, column=endereco_col).value
     artigo = ws_blue.cell(row=r, column=artigo_col).value
+    pedido = ws_blue.cell(row=r, column=pedido_col).value
 
     uf = ""
     if endereco:
@@ -284,8 +452,17 @@ for r in range(2, ws_blue.max_row + 1):
         for key, value, _ in demanda_map:
             if key in artigo_txt:
                 frente_val = value
-                frente_count += 1
                 break
+    pedido_normalizado = normalize_order_id(pedido)
+    if pedido_normalizado and pedido_normalizado in faturado_ids:
+        if frente_val:
+            if not str(frente_val).upper().endswith("_FATURADO"):
+                frente_val = f"{frente_val}_FATURADO"
+        else:
+            frente_val = "FATURADO"
+        faturado_count += 1
+    if frente_val:
+        frente_count += 1
     ws_blue.cell(row=r, column=frente_col, value=frente_val)
 
 for ws in (ws_gray, ws_blue):
@@ -304,6 +481,7 @@ except PermissionError:
 
 print(f"\n✓ Arquivo criado com sucesso: {saved_path}")
 print(f"FRENTE preenchida em {frente_count} linhas.")
+print(f"FRENTE = FATURADO em {faturado_count} linhas.")
 print(f"TRIBUTÁVEL normalizado em {tributavel_count} linhas.")
 try:
     create_din_with_excel(saved_path)
