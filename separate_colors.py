@@ -389,6 +389,8 @@ for row_idx, row_data in enumerate(gray_rows, 1):
 for row_idx, row_data in enumerate(blue_rows, 1):
     for col_idx, source_cell in enumerate(row_data, 1):
         copy_cell(source_cell, ws_blue.cell(row=row_idx, column=col_idx))
+wb_source.close()
+print("Separação das abas concluída.", flush=True)
 
 azul_pedido_header_row, azul_pedido_col = find_column_index(ws_gray, "ID. PEDIDO COMPRADOR")
 azul_coment_header_row, azul_coment_col = find_column_index(ws_gray, "COMENTÁRIOS SOBRE FORNECEDOR")
@@ -421,6 +423,7 @@ for r in range(inicio_verde, ws_blue.max_row + 1):
     if comentario:
         ws_blue.cell(row=r, column=verde_coment_col, value=comentario)
         comentarios_preenchidos += 1
+print("Preenchimento de comentários concluído.", flush=True)
 
 # Colunas UF e FRENTE na aba Itens (Azul)
 demanda_wb = openpyxl.load_workbook(DEMANDA_PATH, data_only=True)
@@ -435,6 +438,7 @@ for r in range(2, demanda_ws.max_row + 1):
         if key and value:
             demanda_map.append((key, value, len(key)))
 demanda_map.sort(key=lambda x: x[2], reverse=True)
+demanda_wb.close()
 
 headers = [str(ws_blue.cell(row=1, column=c).value or "").strip().upper() for c in range(1, ws_blue.max_column + 1)]
 artigo_col = headers.index("ARTIGO") + 1
@@ -449,8 +453,10 @@ ws_blue.cell(row=1, column=uf_col)._style = copy(ws_blue.cell(row=1, column=arti
 ws_blue.cell(row=1, column=frente_col)._style = copy(ws_blue.cell(row=1, column=artigo_col)._style)
 
 faturado_ids = set()
+print("Lendo bases de faturamento...", flush=True)
 faturado_ids.update(load_ids_from_base(CASA_CLIENTE_PATH_HINT, "SGP_NUMERO_PEDIDO"))
 faturado_ids.update(load_ids_from_base(IMPLANTACAO_PATH_HINT, "PEDIDO"))
+print("Bases de faturamento carregadas.", flush=True)
 
 frente_count = 0
 tributavel_count = 0
@@ -522,3 +528,5 @@ try:
 except Exception as exc:
     print(f"Aba DIN não foi criada automaticamente: {exc}")
     raise
+finally:
+    wb_new.close()
