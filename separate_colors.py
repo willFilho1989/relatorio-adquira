@@ -285,9 +285,21 @@ def create_din_with_excel(file_path: Path):
 
         pc1 = wb.PivotCaches().Create(xl_database, src, xl_pivot_table_version15)
         pt1 = pc1.CreatePivotTable(din_ws.Range("A3"), "PT_UF")
-        pt1.PivotFields("FRENTE").Orientation = xl_page_field
+        status_field_pt1 = pt1.PivotFields("STATUS FATURAMENTO")
+        status_field_pt1.Orientation = xl_page_field
+        try:
+            status_field_pt1.CurrentPage = "NAO FATURADO"
+        except Exception:
+            pass
+        pt1.PivotFields("FRENTE").Orientation = xl_row_field
         pt1.PivotFields("UF").Orientation = xl_row_field
+        pt1.PivotFields("UF").Position = 2
         df1 = pt1.AddDataField(pt1.PivotFields("TRIBUTÁVEL"), "Soma de TRIBUTÁVEL", xl_sum)
+        df1.Caption = "TOTAL"
+        try:
+            pt1.CompactLayoutRowHeader = "FRENTE"
+        except Exception:
+            pass
 
         pc2 = wb.PivotCaches().Create(xl_database, src, xl_pivot_table_version15)
         pt2 = pc2.CreatePivotTable(din_ws.Range("F3"), "PT_PEDIDO_UF")
@@ -297,6 +309,24 @@ def create_din_with_excel(file_path: Path):
         pt2.PivotFields("UF").Position = 2
         df2 = pt2.AddDataField(pt2.PivotFields("TRIBUTÁVEL"), "Soma de TRIBUTÁVEL", xl_sum)
 
+        pc3 = wb.PivotCaches().Create(xl_database, src, xl_pivot_table_version15)
+        pt3 = pc3.CreatePivotTable(din_ws.Range("K3"), "PT_FATURADO_UF")
+        status_field = pt3.PivotFields("STATUS FATURAMENTO")
+        status_field.Orientation = xl_page_field
+        try:
+            status_field.CurrentPage = "FATURADO"
+        except Exception:
+            pass
+        pt3.PivotFields("FRENTE").Orientation = xl_row_field
+        pt3.PivotFields("UF").Orientation = xl_row_field
+        pt3.PivotFields("UF").Position = 2
+        df3 = pt3.AddDataField(pt3.PivotFields("TRIBUTÁVEL"), "Soma de TRIBUTÁVEL", xl_sum)
+        df3.Caption = "TOTAL"
+        try:
+            pt3.CompactLayoutRowHeader = "FRENTE"
+        except Exception:
+            pass
+
         pt2.RowAxisLayout(xl_tabular_row)
         no_subtotals = (False,) * 12
         pt2.PivotFields("ID. PEDIDO COMPRADOR").Subtotals = no_subtotals
@@ -305,30 +335,42 @@ def create_din_with_excel(file_path: Path):
         pt2.ColumnGrand = False
 
         # Formato final exibido em PT-BR: R$ 3.889,17
-        for df in (df1, df2):
+        for df in (df1, df2, df3):
             df.NumberFormat = "R$ #,##0.00"
 
         if pt1.DataBodyRange is not None:
             pt1.DataBodyRange.NumberFormat = "R$ #,##0.00"
         if pt2.DataBodyRange is not None:
             pt2.DataBodyRange.NumberFormat = "R$ #,##0.00"
+        if pt3.DataBodyRange is not None:
+            pt3.DataBodyRange.NumberFormat = "R$ #,##0.00"
 
         # Garante formato local diretamente nas colunas de valor da aba DIN
-        # (pivot 1 em B, pivot 2 em H no layout atual)
+        # (pivot 1 em B, pivot 2 em H, pivot 3 em L no layout atual)
         din_ws.Columns("B:B").NumberFormatLocal = "R$ #.##0,00"
         din_ws.Columns("H:H").NumberFormatLocal = "R$ #.##0,00"
+        din_ws.Columns("L:L").NumberFormatLocal = "R$ #.##0,00"
 
         # Reaplica após refresh para evitar retorno de 5 casas
         pt1.RefreshTable()
         pt2.RefreshTable()
+        pt3.RefreshTable()
         if pt1.DataBodyRange is not None:
             pt1.DataBodyRange.NumberFormatLocal = "R$ #.##0,00"
         if pt2.DataBodyRange is not None:
             pt2.DataBodyRange.NumberFormatLocal = "R$ #.##0,00"
+        if pt3.DataBodyRange is not None:
+            pt3.DataBodyRange.NumberFormatLocal = "R$ #.##0,00"
         din_ws.Columns("B:B").NumberFormatLocal = "R$ #.##0,00"
         din_ws.Columns("H:H").NumberFormatLocal = "R$ #.##0,00"
+        din_ws.Columns("L:L").NumberFormatLocal = "R$ #.##0,00"
 
-        din_ws.Columns("A:J").AutoFit()
+        din_ws.Columns("A:M").AutoFit()
+        din_ws.Activate()
+        try:
+            wb.Windows(1).DisplayGridlines = False
+        except Exception:
+            pass
 
         wb.Save()
     except Exception as exc:
@@ -447,10 +489,13 @@ tributavel_col = headers.index("TRIBUTÁVEL") + 1
 pedido_col = headers.index("ID. PEDIDO COMPRADOR") + 1
 uf_col = ws_blue.max_column + 1
 frente_col = ws_blue.max_column + 2
+status_faturamento_col = ws_blue.max_column + 3
 ws_blue.cell(row=1, column=uf_col, value="UF")
 ws_blue.cell(row=1, column=frente_col, value="FRENTE")
+ws_blue.cell(row=1, column=status_faturamento_col, value="STATUS FATURAMENTO")
 ws_blue.cell(row=1, column=uf_col)._style = copy(ws_blue.cell(row=1, column=artigo_col)._style)
 ws_blue.cell(row=1, column=frente_col)._style = copy(ws_blue.cell(row=1, column=artigo_col)._style)
+ws_blue.cell(row=1, column=status_faturamento_col)._style = copy(ws_blue.cell(row=1, column=artigo_col)._style)
 
 faturado_ids = set()
 print("Lendo bases de faturamento...", flush=True)
@@ -484,6 +529,10 @@ for r in range(2, ws_blue.max_row + 1):
         trib_cell.number_format = "R$ #,##0.00"
         tributavel_count += 1
 
+    pedido_normalizado = normalize_order_id(pedido)
+    status_faturamento = "FATURADO" if pedido_normalizado and pedido_normalizado in faturado_ids else "NAO FATURADO"
+    ws_blue.cell(row=r, column=status_faturamento_col, value=status_faturamento)
+
     frente_val = ""
     if artigo:
         artigo_txt = str(artigo).upper()
@@ -491,8 +540,7 @@ for r in range(2, ws_blue.max_row + 1):
             if key in artigo_txt:
                 frente_val = value
                 break
-    pedido_normalizado = normalize_order_id(pedido)
-    if pedido_normalizado and pedido_normalizado in faturado_ids:
+    if status_faturamento == "FATURADO":
         if frente_val:
             if not str(frente_val).upper().endswith("_FATURADO"):
                 frente_val = f"{frente_val}_FATURADO"
@@ -524,7 +572,7 @@ print(f"TRIBUTÁVEL normalizado em {tributavel_count} linhas.")
 print(f"COMENTÁRIOS preenchidos na aba Verde: {comentarios_preenchidos} linhas.")
 try:
     create_din_with_excel(saved_path)
-    print("Aba DIN criada com as duas dinâmicas.")
+    print("Aba DIN criada com três dinâmicas (incluindo apenas faturados).")
 except Exception as exc:
     print(f"Aba DIN não foi criada automaticamente: {exc}")
     raise
